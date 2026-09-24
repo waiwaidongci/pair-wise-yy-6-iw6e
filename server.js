@@ -1,54 +1,20 @@
 import http from "node:http";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { loadDb, saveDb, invalidateOpenLoans } from "./loan-store.js";
+import {
+  LOAN_STATUS,
+  FILTER_STATUSES,
+  findOpenLoan,
+  validateApplication,
+  validateReturn,
+  decideReturn,
+  invalidationReason,
+} from "./loan-rules.js";
+import { loanPage } from "./loan-page.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const dbPath = join(__dirname, "data", "ink-stick-testing.json");
 const port = Number(process.env.PORT || 3037);
-const seed = {
-  "items": [
-    {
-      "code": "IS-001",
-      "smokeSource": "黄山松烟",
-      "glueRatio": "7.5%",
-      "ageYears": 8,
-      "storage": "恒湿柜B",
-      "status": "已试磨",
-      "logs": [
-        {
-          "at": "2026-06-11",
-          "step": "试磨",
-          "note": "宣纸20滴水，出墨快，评分86",
-          "score": 86
-        }
-      ]
-    },
-    {
-      "code": "IS-002",
-      "smokeSource": "桐油烟",
-      "glueRatio": "8%",
-      "ageYears": 3,
-      "storage": "试样盒C",
-      "status": "待试磨",
-      "logs": []
-    }
-  ]
-};
-const fields = [["code","墨锭编号","text"],["smokeSource","烟料来源","text"],["glueRatio","胶料比例","text"],["ageYears","存放年限","number"],["storage","存放位置","text"]];
-const stages = ["待试磨","已试磨","重点观察"];
-const statLabels = ["待试磨","已试磨","重点观察"];
-const extraFields = [["paper","试磨纸张"],["water","加水量"],["speed","出墨速度"],["colorLayer","墨色层次"],["sediment","沉淀情况"],["score","评分"]];
+const stages = ["待试磨", "已试磨", "重点观察"];
+const statLabels = ["待试磨", "已试磨", "重点观察"];
 
-async function loadDb() {
-  if (!existsSync(dbPath)) {
-    await mkdir(dirname(dbPath), { recursive: true });
-    await writeFile(dbPath, JSON.stringify(seed, null, 2));
-  }
-  return JSON.parse(await readFile(dbPath, "utf8"));
-}
-async function saveDb(db) { await writeFile(dbPath, JSON.stringify(db, null, 2)); }
 async function body(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -64,7 +30,7 @@ function html(res, text) {
 }
 function newId() { return "IS-" + Date.now(); }
 function computeStats(items) {
-  const stats = Object.fromEntries(statLabels.map(label => [label, 0]));
+  const stats = Object.fromEntries(statLabels.map((label) => [label, 0]));
   for (const item of items) {
     if (stats[item.status] !== undefined) stats[item.status] += 1;
   }
@@ -74,7 +40,12 @@ function summarize(item) {
   const logCount = (item.logs || []).length + (item.tasks || []).reduce((n, t) => n + (t.logs || []).length, 0);
   return { ...item, logCount };
 }
-function page() {
+function findItem(db, key) {
+  return db.items.find((x) => x.id === key || x.code === key);
+}
+
+// 原试磨室页面，保留在 /testing。
+function testingPage() {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -94,24 +65,25 @@ function page() {
     .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; } .card { display:grid; gap:8px; }
     .meta { color:var(--muted); font-size:13px; } .pill { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:3px 8px; font-size:12px; }
     .logs { border-top:1px solid var(--line); padding-top:8px; max-height:90px; overflow:auto; } .warn { color:var(--warn); font-weight:700; }
+    .head-actions { display:flex; gap:10px; align-items:center; } .head-actions a { color:var(--accent); font-weight:700; text-decoration:none; }
     @media (max-width:900px){ header{display:block;padding:18px 16px;} main{grid-template-columns:1fr;padding:16px;} }
   </style>
 </head>
 <body>
-  <header><div><h1>墨锭试磨室</h1><div class="meta">墨锭建档、试磨记录和评分统计</div></div><button id="reload">刷新</button></header>
+  <header><div><h1>墨锭试磨室</h1><div class="meta">墨锭建档、试磨记录和评分统计</div></div><div class="head-actions"><a href="/">借样登记台 →</a><button id="reload">刷新</button></div></header>
   <main>
     <section>
-      <form id="createForm"><h2>新增墨锭</h2><div id="fields"></div><label>初始状态</label><select name="status">${stages.map(s => '<option>'+s+'</option>').join('')}</select><button>保存墨锭</button></form>
+      <form id="createForm"><h2>新增墨锭</h2><div id="fields"></div><label>初始状态</label><select name="status">${stages.map((s) => "<option>" + s + "</option>").join("")}</select><button>保存墨锭</button></form>
       <form id="actionForm" style="margin-top:14px"><h2>创建试磨记录</h2><label>选择墨锭</label><select name="id" id="itemSelect"></select><div id="extraFields"></div><button>提交记录</button></form>
     </section>
     <section>
       <div class="stats" id="stats"></div>
-      <div class="toolbar"><select id="statusFilter"><option value="">全部状态</option>${stages.map(s => '<option>'+s+'</option>').join('')}</select><input id="search" placeholder="搜索编号或关键词"></div>
+      <div class="toolbar"><select id="statusFilter"><option value="">全部状态</option>${stages.map((s) => "<option>" + s + "</option>").join("")}</select><input id="search" placeholder="搜索编号或关键词"></div>
       <div class="panel"><h2>选择墨锭后录入试磨记录，系统会保留多次试磨结果并更新评分状态。</h2><div class="grid" id="cards"></div></div>
     </section>
   </main>
   <script>
-    const fields = [["code","墨锭编号","text"],["smokeSource","烟料来源","text"],["glueRatio","胶料比例","text"],["ageYears","存放年限","number"],["storage","存放位置","text"]];
+    const fields = [["code","墨锭编号","text"],["smokeSource","烟料来源","text"],["glueRatio","胶料比例","text"],["ageYears","存放年限","number"],["storage","存放位置","text"],["custodian","保管人","text"]];
     const stages = ["待试磨","已试磨","重点观察"];
     const extraFields = [["paper","试磨纸张"],["water","加水量"],["speed","出墨速度"],["colorLayer","墨色层次"],["sediment","沉淀情况"],["score","评分"]];
     const createForm = document.querySelector('#createForm');
@@ -145,7 +117,7 @@ function page() {
       const main = fields.slice(0,4).map(([key,label]) => '<div><b>'+label+'</b> '+(item[key] ?? '')+'</div>').join('');
       const tasks = (item.tasks || []).map(t => '<div class="meta">任务 '+t.position+' · '+t.status+' · '+t.tension+'</div>').join('');
       const logs = (item.logs || []).slice(-4).map(l => '<div>'+l.step+'：'+l.note+'</div>').join('');
-      return '<article class="card"><h3>'+(item.code || item.id)+'</h3><span class="pill">'+item.status+'</span>'+main+tasks+'<label>状态</label><select data-status="'+(item.id || item.code)+'">'+stages.map(s => '<option '+(s===item.status?'selected':'')+'>'+s+'</option>').join('')+'</select><button class="secondary" data-note="'+(item.id || item.code)+'">追加备注</button><div class="logs meta">'+(logs || '暂无记录')+'</div></article>';
+      return '<article class="card"><h3>'+(item.code || item.id)+'</h3><span class="pill">'+item.status+'</span>'+main+'<div><b>保管人</b> '+(item.custodian || '未指派')+'</div>'+tasks+'<label>状态</label><select data-status="'+(item.id || item.code)+'">'+stages.map(s => '<option '+(s===item.status?'selected':'')+'>'+s+'</option>').join('')+'</select><button class="secondary" data-note="'+(item.id || item.code)+'">追加备注</button><div class="logs meta">'+(logs || '暂无记录')+'</div></article>';
     }
     async function load() { items = await api('/api/items'); render(); }
     createForm.onsubmit = async event => { event.preventDefault(); await api('/api/items', { method:'POST', body: JSON.stringify(Object.fromEntries(new FormData(createForm).entries())) }); createForm.reset(); await load(); };
@@ -161,29 +133,36 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const db = await loadDb();
-    if (req.method === "GET" && url.pathname === "/") return html(res, page());
+    if (req.method === "GET" && url.pathname === "/") return html(res, loanPage());
+    if (req.method === "GET" && url.pathname === "/testing") return html(res, testingPage());
     if (req.method === "GET" && url.pathname === "/api/items") return send(res, 200, db.items.map(summarize));
     if (req.method === "POST" && url.pathname === "/api/items") {
       const input = await body(req);
+      if (!input.custodian && db.keepers.length) input.custodian = db.keepers[0].name;
       const item = { id: newId(), ...input, logs: [{ at: new Date().toISOString(), step: "建档", note: "创建墨锭" }] };
-      
       db.items.unshift(item);
       await saveDb(db);
       return send(res, 201, item);
     }
     const patch = url.pathname.match(/^\/api\/items\/([^/]+)$/);
     if (patch && req.method === "PATCH") {
-      const item = db.items.find(x => x.id === patch[1] || x.code === patch[1]);
+      const item = findItem(db, decodeURIComponent(patch[1]));
       if (!item) return send(res, 404, { error: "item_not_found" });
-      Object.assign(item, await body(req));
+      const before = { code: item.code, custodian: item.custodian };
+      const input = await body(req);
+      delete input.id;
+      Object.assign(item, input);
+      // 改墨锭编号或保管人：该锭未结单立即失效，已结旧记录只读不动。
+      const reason = invalidationReason(before, { code: item.code, custodian: item.custodian });
+      const voided = reason ? invalidateOpenLoans(db, item, reason) : [];
       item.logs ||= [];
       item.logs.push({ at: new Date().toISOString(), step: "状态", note: "更新为" + item.status });
       await saveDb(db);
-      return send(res, 200, item);
+      return send(res, 200, { ...item, voidedLoans: voided.map((l) => l.id) });
     }
     const log = url.pathname.match(/^\/api\/items\/([^/]+)\/logs$/);
     if (log && req.method === "POST") {
-      const item = db.items.find(x => x.id === log[1] || x.code === log[1]);
+      const item = findItem(db, decodeURIComponent(log[1]));
       if (!item) return send(res, 404, { error: "item_not_found" });
       const input = await body(req);
       item.logs ||= [];
@@ -193,7 +172,7 @@ const server = http.createServer(async (req, res) => {
     }
     const action = url.pathname.match(/^\/api\/items\/([^/]+)\/action$/);
     if (action && req.method === "POST") {
-      const item = db.items.find(x => x.id === action[1] || x.code === action[1]);
+      const item = findItem(db, decodeURIComponent(action[1]));
       if (!item) return send(res, 404, { error: "item_not_found" });
       const input = await body(req);
       item.logs ||= [];
@@ -205,10 +184,69 @@ const server = http.createServer(async (req, res) => {
       await saveDb(db);
       return send(res, 201, item);
     }
+    if (req.method === "GET" && url.pathname === "/api/keepers") return send(res, 200, db.keepers);
+    // 借样单列表：可按状态筛选（未归还/待鉴定/已归还/已失效）。
+    if (req.method === "GET" && url.pathname === "/api/loans") {
+      const status = url.searchParams.get("status");
+      if (status && !FILTER_STATUSES.includes(status)) return send(res, 400, { error: "bad_status" });
+      const list = status ? db.loans.filter((l) => l.status === status) : db.loans;
+      return send(res, 200, list);
+    }
+    if (req.method === "POST" && url.pathname === "/api/loans") {
+      const input = await body(req);
+      const item = findItem(db, String(input.itemId || ""));
+      if (!item) return send(res, 404, { error: "item_not_found" });
+      // 每锭同时只留一张未归还单：重复申请沿用首次，不再开新单。
+      const open = findOpenLoan(db.loans, item.id);
+      if (open) return send(res, 200, { ...open, reused: true, message: "重复申请，沿用首次借样单" });
+      // 缺留样编号、保管人离岗、温湿度越界：整单退回，不落任何半截记录。
+      const check = validateApplication({ item, input, keepers: db.keepers });
+      if (!check.ok) return send(res, 400, { error: "loan_rejected", message: "整单退回，未留任何记录", reasons: check.errors });
+      const loan = {
+        id: "L" + Date.now(),
+        itemId: item.id,
+        inkCode: item.code,
+        sampleNo: String(input.sampleNo).trim(),
+        borrower: String(input.borrower).trim(),
+        purpose: String(input.purpose || "书写样张").trim(),
+        keeper: item.custodian,
+        temperature: Number(input.temperature),
+        humidity: Number(input.humidity),
+        weightOut: Number(input.weightOut),
+        status: LOAN_STATUS.OPEN,
+        createdAt: new Date().toISOString(),
+      };
+      db.loans.unshift(loan);
+      await saveDb(db);
+      return send(res, 201, loan);
+    }
+    const ret = url.pathname.match(/^\/api\/loans\/([^/]+)\/return$/);
+    if (ret && req.method === "POST") {
+      const loan = db.loans.find((x) => x.id === decodeURIComponent(ret[1]));
+      if (!loan) return send(res, 404, { error: "loan_not_found" });
+      // 旧记录只读：已结单（已归还/待鉴定/已失效）不能再动。
+      if (loan.status !== LOAN_STATUS.OPEN) {
+        return send(res, 409, { error: "loan_closed", message: "旧记录只读：该单已结，不能重复归还" });
+      }
+      const input = await body(req);
+      const check = validateReturn({ loan, input, keepers: db.keepers });
+      if (!check.ok) return send(res, 400, { error: "return_rejected", message: "归还核验未通过", reasons: check.errors });
+      const decision = decideReturn({ weightOut: loan.weightOut, weightBack: input.weightBack, cornerCracked: input.cornerCracked });
+      Object.assign(loan, {
+        status: decision.status,
+        returnedAt: new Date().toISOString(),
+        verifier: String(input.verifier).trim(),
+        weightBack: Number(input.weightBack),
+        cornerCracked: Boolean(input.cornerCracked),
+        loss: decision.loss,
+      });
+      await saveDb(db);
+      return send(res, 200, loan);
+    }
     if (req.method === "GET" && url.pathname === "/api/stats") return send(res, 200, computeStats(db.items));
     send(res, 404, { error: "not_found" });
   } catch (error) {
     send(res, 500, { error: error.message });
   }
 });
-server.listen(port, () => console.log("墨锭试磨室 listening on http://localhost:" + port));
+server.listen(port, () => console.log("借样登记台 listening on http://localhost:" + port));
