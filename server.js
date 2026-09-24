@@ -3,9 +3,17 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  createLoan,
+  recordReturn,
+  applyItemChange,
+  setCustodianDuty,
+} from "./loan-rules.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const dbPath = join(__dirname, "data", "ink-stick-testing.json");
+const loanArchivePath = join(__dirname, "data", "loan-archive.json");
+const loanPagePath = join(__dirname, "public", "loan.html");
 const port = Number(process.env.PORT || 3037);
 const seed = {
   "items": [
@@ -15,6 +23,7 @@ const seed = {
       "glueRatio": "7.5%",
       "ageYears": 8,
       "storage": "恒湿柜B",
+      "custodian": "周云岫",
       "status": "已试磨",
       "logs": [
         {
@@ -31,12 +40,13 @@ const seed = {
       "glueRatio": "8%",
       "ageYears": 3,
       "storage": "试样盒C",
+      "custodian": "吴松涛",
       "status": "待试磨",
       "logs": []
     }
   ]
 };
-const fields = [["code","墨锭编号","text"],["smokeSource","烟料来源","text"],["glueRatio","胶料比例","text"],["ageYears","存放年限","number"],["storage","存放位置","text"]];
+const fields = [["code","墨锭编号","text"],["smokeSource","烟料来源","text"],["glueRatio","胶料比例","text"],["ageYears","存放年限","number"],["storage","存放位置","text"],["custodian","保管人","text"]];
 const stages = ["待试磨","已试磨","重点观察"];
 const statLabels = ["待试磨","已试磨","重点观察"];
 const extraFields = [["paper","试磨纸张"],["water","加水量"],["speed","出墨速度"],["colorLayer","墨色层次"],["sediment","沉淀情况"],["score","评分"]];
@@ -49,6 +59,16 @@ async function loadDb() {
   return JSON.parse(await readFile(dbPath, "utf8"));
 }
 async function saveDb(db) { await writeFile(dbPath, JSON.stringify(db, null, 2)); }
+async function loadLoanArchive() {
+  if (!existsSync(loanArchivePath)) {
+    await mkdir(dirname(loanArchivePath), { recursive: true });
+    await writeFile(loanArchivePath, JSON.stringify({ custodians: [], loans: [] }, null, 2));
+  }
+  return JSON.parse(await readFile(loanArchivePath, "utf8"));
+}
+async function saveLoanArchive(archive) {
+  await writeFile(loanArchivePath, JSON.stringify(archive, null, 2));
+}
 async function body(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -98,7 +118,7 @@ function page() {
   </style>
 </head>
 <body>
-  <header><div><h1>墨锭试磨室</h1><div class="meta">墨锭建档、试磨记录和评分统计</div></div><button id="reload">刷新</button></header>
+  <header><div><h1>墨锭试磨室</h1><div class="meta">墨锭建档、试磨记录和评分统计 · <a href="/loan">借样登记台</a></div></div><button id="reload">刷新</button></header>
   <main>
     <section>
       <form id="createForm"><h2>新增墨锭</h2><div id="fields"></div><label>初始状态</label><select name="status">${stages.map(s => '<option>'+s+'</option>').join('')}</select><button>保存墨锭</button></form>
@@ -111,7 +131,7 @@ function page() {
     </section>
   </main>
   <script>
-    const fields = [["code","墨锭编号","text"],["smokeSource","烟料来源","text"],["glueRatio","胶料比例","text"],["ageYears","存放年限","number"],["storage","存放位置","text"]];
+    const fields = [["code","墨锭编号","text"],["smokeSource","烟料来源","text"],["glueRatio","胶料比例","text"],["ageYears","存放年限","number"],["storage","存放位置","text"],["custodian","保管人","text"]];
     const stages = ["待试磨","已试磨","重点观察"];
     const extraFields = [["paper","试磨纸张"],["water","加水量"],["speed","出墨速度"],["colorLayer","墨色层次"],["sediment","沉淀情况"],["score","评分"]];
     const createForm = document.querySelector('#createForm');
@@ -161,8 +181,42 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const db = await loadDb();
+    const loanArchive = await loadLoanArchive();
     if (req.method === "GET" && url.pathname === "/") return html(res, page());
+    if (req.method === "GET" && url.pathname === "/loan") {
+      const pageText = await readFile(loanPagePath, "utf8");
+      return html(res, pageText);
+    }
     if (req.method === "GET" && url.pathname === "/api/items") return send(res, 200, db.items.map(summarize));
+
+    // —— 借样登记台（规则见 loan-rules.js，档案见 data/loan-archive.json，页面见 public/loan.html）——
+    if (req.method === "GET" && url.pathname === "/api/loan/state") {
+      return send(res, 200, {
+        items: db.items.map(({ code, smokeSource, custodian, status }) => ({ code, smokeSource, custodian, status })),
+        custodians: loanArchive.custodians,
+        loans: loanArchive.loans,
+      });
+    }
+    const loanCustodian = url.pathname.match(/^\/api\/loan\/custodians\/([^/]+)$/);
+    if (loanCustodian && req.method === "PATCH") {
+      const result = setCustodianDuty(loanArchive, decodeURIComponent(loanCustodian[1]), (await body(req)).duty);
+      if (result.outcome === "rejected") return send(res, 400, { errors: result.errors });
+      await saveLoanArchive(loanArchive);
+      return send(res, 200, result.custodian);
+    }
+    if (req.method === "POST" && url.pathname === "/api/loan/loans") {
+      const result = createLoan(loanArchive, db.items, await body(req));
+      if (result.outcome === "rejected") return send(res, 400, { errors: result.errors });
+      await saveLoanArchive(loanArchive);
+      return send(res, result.outcome === "created" ? 201 : 200, result.loan);
+    }
+    const loanReturn = url.pathname.match(/^\/api\/loan\/loans\/([^/]+)\/return$/);
+    if (loanReturn && req.method === "POST") {
+      const result = recordReturn(loanArchive, { ...(await body(req)), id: decodeURIComponent(loanReturn[1]) });
+      if (result.outcome === "rejected") return send(res, 400, { errors: result.errors });
+      await saveLoanArchive(loanArchive);
+      return send(res, 200, result.loan);
+    }
     if (req.method === "POST" && url.pathname === "/api/items") {
       const input = await body(req);
       const item = { id: newId(), ...input, logs: [{ at: new Date().toISOString(), step: "建档", note: "创建墨锭" }] };
@@ -175,11 +229,23 @@ const server = http.createServer(async (req, res) => {
     if (patch && req.method === "PATCH") {
       const item = db.items.find(x => x.id === patch[1] || x.code === patch[1]);
       if (!item) return send(res, 404, { error: "item_not_found" });
-      Object.assign(item, await body(req));
+      const oldItem = { code: item.code, custodian: item.custodian };
+      const input = await body(req);
+      // 改墨锭编号或保管人：该锭未结（未归还）借样单立即失效、只读
+      const voided = applyItemChange(loanArchive, oldItem, input);
+      Object.assign(item, input);
       item.logs ||= [];
-      item.logs.push({ at: new Date().toISOString(), step: "状态", note: "更新为" + item.status });
+      if (voided.length) {
+        item.logs.push({
+          at: new Date().toISOString(),
+          step: "借样联动",
+          note: "档案变更导致 " + voided.length + " 张未归还借样单失效：" + voided.map(l => l.id).join("、"),
+        });
+      }
+      item.logs.push({ at: new Date().toISOString(), step: "档案更新", note: "状态为" + item.status });
       await saveDb(db);
-      return send(res, 200, item);
+      await saveLoanArchive(loanArchive);
+      return send(res, 200, { item, voidedLoans: voided.map(l => l.id) });
     }
     const log = url.pathname.match(/^\/api\/items\/([^/]+)\/logs$/);
     if (log && req.method === "POST") {

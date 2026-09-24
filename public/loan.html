@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>借样登记台 · 墨锭</title>
+  <style>
+    :root { --bg:#f1f3ef; --panel:#fff; --ink:#20241f; --muted:#687066; --line:#d4ddd0; --accent:#526f43; --warn:#9b4937; --amber:#8a6a1f; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif; }
+    header { padding:22px 28px; background:#fff; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:16px; align-items:center; }
+    h1 { margin:0; font-size:25px; } h2 { margin:0 0 12px; font-size:17px; } h3 { margin:0; font-size:15px; }
+    main { display:grid; grid-template-columns:390px 1fr; gap:22px; padding:22px 28px; align-items:start; }
+    form,.panel,.card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; }
+    form + form,.panel + .panel { margin-top:14px; }
+    label { display:block; margin:10px 0 5px; color:var(--muted); font-size:13px; }
+    input,select,textarea { width:100%; border:1px solid var(--line); border-radius:6px; padding:9px; font:inherit; background:#fff; }
+    button { border:0; border-radius:6px; background:var(--accent); color:#fff; padding:10px 13px; font-weight:700; cursor:pointer; }
+    button.secondary { background:#69736a; }
+    button.mini { padding:4px 10px; font-size:12px; font-weight:400; }
+    .meta { color:var(--muted); font-size:13px; }
+    .warnbox { background:#f7e9e5; border:1px solid var(--warn); color:var(--warn); border-radius:8px; padding:10px 14px; margin-bottom:14px; display:none; white-space:pre-line; }
+    .okbox { background:#e9f1e4; border:1px solid var(--accent); color:var(--accent); border-radius:8px; padding:10px 14px; margin-bottom:14px; display:none; }
+    .tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
+    .tab { background:#fff; color:var(--ink); border:1px solid var(--line); border-radius:999px; padding:7px 14px; font-weight:400; }
+    .tab.active { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:700; }
+    .tab .n { font-size:12px; opacity:.85; margin-left:3px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
+    .card { display:grid; gap:7px; }
+    .pill { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:3px 9px; font-size:12px; }
+    .pill.open { background:#eef4ea; border-color:#b7cda9; }
+    .pill.appraisal { background:#f7ecd6; border-color:#caa75f; color:var(--amber); }
+    .pill.returned { background:#e9eef2; border-color:#aebfc9; }
+    .pill.void { background:#eee; border-color:#ccc; color:#777; }
+    .row { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+    .kv { font-size:13px; color:var(--ink); } .kv b { color:var(--muted); font-weight:400; margin-right:4px; }
+    .reasons { color:var(--warn); font-size:13px; font-weight:700; }
+    .readonly { background:#f6f6f4; }
+    .roster { display:flex; gap:8px; flex-wrap:wrap; }
+    .keeper { display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:999px; padding:5px 12px; font-size:13px; background:#fff; }
+    .dot { width:8px; height:8px; border-radius:50%; background:var(--accent); } .dot.off { background:var(--warn); }
+    .checkline { display:flex; align-items:center; gap:8px; margin:10px 0 5px; }
+    .checkline input { width:auto; } .checkline label { margin:0; }
+    a { color:var(--accent); }
+    @media (max-width:920px){ header{display:block;padding:18px 16px;} main{grid-template-columns:1fr;padding:16px;} }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>借样登记台</h1>
+      <div class="meta">成品墨锭书写样张借出登记 · 纸卡与实物逐单核对 · <a href="/">返回墨锭试磨室</a></div>
+    </div>
+    <button id="reload">刷新</button>
+  </header>
+  <main>
+    <section>
+      <div id="warn" class="warnbox"></div>
+      <div id="ok" class="okbox"></div>
+
+      <form id="loanForm">
+        <h2>出库登记（每锭一张未归还单）</h2>
+        <label>留样编号（实物墨锭）</label>
+        <select name="itemCode" id="itemSelect"></select>
+        <label>纸卡编号</label>
+        <input name="cardCode" placeholder="如 KA-2026-031，登记台负责与实物对上">
+        <label>借样人 / 单位</label>
+        <input name="borrower" placeholder="选填">
+        <label>样张用途</label>
+        <input name="purpose" placeholder="选填，如宣纸样张试笔">
+        <label>出库保管人</label>
+        <select name="custodian" id="custodianSelect"></select>
+        <label>出库时温度 ℃（允许 15~25）</label>
+        <input name="tempC" type="number" step="0.1">
+        <label>出库时湿度 %（允许 45~65）</label>
+        <input name="humidity" type="number" step="1">
+        <label>出库重量（克）</label>
+        <input name="weightOutG" type="number" step="0.01">
+        <div style="margin-top:14px"><button>提交借样单</button></div>
+      </form>
+
+      <form id="returnForm">
+        <h2>归还核验（另一位库管）</h2>
+        <label>未归还借样单</label>
+        <select name="id" id="openSelect"></select>
+        <label>核验库管（不得为出库保管人本人）</label>
+        <select name="custodian" id="verifierSelect"></select>
+        <label>归还重量（克）</label>
+        <input name="weightInG" type="number" step="0.01">
+        <div class="checkline"><input type="checkbox" name="cornerCracked" id="cornerCracked"><label for="cornerCracked">边角有裂角</label></div>
+        <label>核验备注</label>
+        <input name="note" placeholder="选填">
+        <div style="margin-top:14px"><button>提交核验</button></div>
+      </form>
+
+      <div class="panel">
+        <h2>库管名册</h2>
+        <div class="roster" id="roster"></div>
+      </div>
+
+      <div class="panel">
+        <h2>墨锭档案（改编号/保管人会作废旧单）</h2>
+        <div id="itemRoster"></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="panel">
+        <div class="tabs" id="tabs">
+          <button type="button" class="tab" data-f="未归还">未归还<span class="n"></span></button>
+          <button type="button" class="tab" data-f="待鉴定">待鉴定<span class="n"></span></button>
+          <button type="button" class="tab" data-f="已归还">已归还<span class="n"></span></button>
+          <button type="button" class="tab" data-f="">全部<span class="n"></span></button>
+        </div>
+        <div class="grid" id="cards"></div>
+      </div>
+      <div class="panel readonly">
+        <h2>失效档案（只读）</h2>
+        <div class="meta" style="margin-bottom:10px">墨锭编号或保管人变更后，该锭未结单作废于此，旧记录不可改。</div>
+        <div class="grid" id="voidCards"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    let state = { items: [], custodians: [], loans: [] };
+    let filter = "未归还";
+
+    async function api(path, options) {
+      const res = await fetch(path, options && options.body
+        ? { ...options, headers: { "Content-Type": "application/json" } }
+        : options);
+      const data = await res.json();
+      if (!res.ok) throw Object.assign(new Error((data.errors || [data.error]).join("\n")), { data });
+      return data;
+    }
+    function flashError(msg) {
+      const el = document.getElementById("warn");
+      el.textContent = msg;
+      el.style.display = "block";
+      document.getElementById("ok").style.display = "none";
+    }
+    function flashOk(msg) {
+      const el = document.getElementById("ok");
+      el.textContent = msg;
+      el.style.display = "block";
+      document.getElementById("warn").style.display = "none";
+    }
+    function esc(s) {
+      return String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+    }
+    const pillClass = { "未归还":"open", "待鉴定":"appraisal", "已归还":"returned", "失效":"void" };
+
+    function renderSelects() {
+      document.getElementById("itemSelect").innerHTML = state.items
+        .map(i => `<option value="${esc(i.code)}">${esc(i.code)} · ${esc(i.smokeSource || "")}${i.custodian ? " · 保管 " + esc(i.custodian) : ""}</option>`).join("");
+      const keepers = state.custodians
+        .map(c => `<option value="${esc(c.name)}">${esc(c.name)}（${esc(c.duty)}）</option>`).join("");
+      document.getElementById("custodianSelect").innerHTML = keepers;
+      document.getElementById("verifierSelect").innerHTML = keepers;
+      const open = state.loans.filter(l => l.status === "未归还");
+      document.getElementById("openSelect").innerHTML = open.length
+        ? open.map(l => `<option value="${esc(l.id)}">${esc(l.id)} · ${esc(l.itemCode)} · 出库 ${esc(l.custodian)}</option>`).join("")
+        : '<option value="">（暂无未归还单据）</option>';
+    }
+
+    function loanCard(l) {
+      let body = `
+        <div class="kv"><b>留样编号</b>${esc(l.itemCode)}<b style="margin-left:10px">纸卡</b>${esc(l.cardCode || "—")}</div>
+        <div class="kv"><b>借样人</b>${esc(l.borrower || "—")}<b style="margin-left:10px">用途</b>${esc(l.purpose || "—")}</div>
+        <div class="kv"><b>出库</b>${esc(l.custodian)} · ${esc(new Date(l.createdAt).toLocaleString("zh-CN"))}</div>
+        <div class="kv"><b>出库重</b>${l.weightOutG} 克 · ${l.tempC}℃ / ${l.humidity}%</div>`;
+      if (l.return) {
+        body += `<div class="kv"><b>归还</b>${esc(l.return.custodian)} 核验 · ${esc(new Date(l.return.at).toLocaleString("zh-CN"))}</div>
+          <div class="kv"><b>归还重</b>${l.return.weightInG} 克 · 差 ${l.return.weightLossG} 克 · 边角${l.return.cornerCracked ? "有裂角" : "完好"}</div>`;
+        if (l.return.reasons.length) body += `<div class="reasons">转待鉴定：${l.return.reasons.map(esc).join("；")}</div>`;
+        if (l.return.note) body += `<div class="meta">备注：${esc(l.return.note)}</div>`;
+      }
+      if (l.status === "失效") {
+        body += `<div class="reasons">失效原因：${esc(l.voidReason || "")} · ${esc(new Date(l.voidedAt).toLocaleString("zh-CN"))}</div>`;
+      }
+      return `<article class="card">
+        <div class="row"><h3>${esc(l.id)}</h3><span class="pill ${pillClass[l.status] || ""}">${esc(l.status)}</span></div>
+        ${body}
+      </article>`;
+    }
+
+    function renderList() {
+      const counts = { "未归还":0, "待鉴定":0, "已归还":0 };
+      for (const l of state.loans) if (l.status !== "失效") counts[l.status] = (counts[l.status] || 0) + 1;
+      document.querySelectorAll(".tab").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.f === filter);
+        const n = btn.dataset.f === "" ? state.loans.filter(l => l.status !== "失效").length : counts[btn.dataset.f];
+        btn.querySelector(".n").textContent = n;
+      });
+      const shown = state.loans.filter(l => l.status !== "失效" && (!filter || l.status === filter));
+      document.getElementById("cards").innerHTML = shown.map(loanCard).join("") || '<div class="meta">没有符合的单据。</div>';
+      const voids = state.loans.filter(l => l.status === "失效");
+      document.getElementById("voidCards").innerHTML = voids.map(loanCard).join("") || '<div class="meta">暂无失效单据。</div>';
+    }
+
+    function renderRoster() {
+      document.getElementById("roster").innerHTML = state.custodians.map(c =>
+        `<span class="keeper"><span class="dot ${c.duty === "离岗" ? "off" : ""}"></span>${esc(c.name)} · ${esc(c.duty)}
+          <button type="button" class="mini secondary" data-keeper="${esc(c.name)}" data-duty="${c.duty === "离岗" ? "在岗" : "离岗"}">${c.duty === "离岗" ? "复工" : "设为离岗"}</button>
+        </span>`).join("");
+      document.querySelectorAll("[data-keeper]").forEach(btn => {
+        btn.onclick = async () => {
+          try {
+            await api("/api/loan/custodians/" + encodeURIComponent(btn.dataset.keeper), {
+              method: "PATCH", body: JSON.stringify({ duty: btn.dataset.duty })
+            });
+            await load();
+          } catch (e) { flashError(e.message); }
+        };
+      });
+    }
+
+    function renderItems() {
+      document.getElementById("itemRoster").innerHTML = state.items.map(i =>
+        `<div class="keeper" style="border-radius:8px; width:100%; justify-content:space-between; margin-bottom:6px">
+          <span><b>${esc(i.code)}</b> · ${esc(i.smokeSource || "")} · 保管人 ${esc(i.custodian || "（未指派）")}</span>
+          <span>
+            <button type="button" class="mini secondary" data-item="${esc(i.code)}" data-field="code">改编号</button>
+            <button type="button" class="mini secondary" data-item="${esc(i.code)}" data-field="custodian">改保管人</button>
+          </span>
+        </div>`).join("") || '<div class="meta">墨锭档案为空。</div>';
+      document.querySelectorAll("[data-item]").forEach(btn => {
+        btn.onclick = async () => {
+          const item = state.items.find(i => i.code === btn.dataset.item);
+          const field = btn.dataset.field;
+          const label = field === "code" ? "新墨锭编号" : "新保管人姓名（须在册）";
+          const value = prompt(label + "\n注意：该锭未归还借样单将立即失效、只读", item[field] || "");
+          if (value === null || value.trim() === (item[field] || "")) return;
+          if (!confirm("确认修改？该锭未归还借样单会作废入只读档案。")) return;
+          try {
+            const r = await api("/api/items/" + encodeURIComponent(item.code), {
+              method: "PATCH", body: JSON.stringify({ [field]: value.trim() })
+            });
+            flashOk("档案已更新，失效借样单 " + r.voidedLoans.length + " 张");
+            await load();
+          } catch (e) { flashError(e.message); }
+        };
+      });
+    }
+
+    function render() { renderSelects(); renderList(); renderRoster(); renderItems(); }
+    async function load() {
+      state = await api("/api/loan/state");
+      render();
+    }
+
+    document.getElementById("loanForm").onsubmit = async ev => {
+      ev.preventDefault();
+      const fd = new FormData(ev.target);
+      const input = Object.fromEntries(fd.entries());
+      try {
+        const r = await api("/api/loan/loans", { method: "POST", body: JSON.stringify(input) });
+        flashOk(r.outcome === "reused"
+          ? "该锭已有未归还单，重复申请沿用首次单据：" + r.loan.id
+          : "已登记：" + r.loan.id);
+        ev.target.reset();
+        filter = "未归还";
+        await load();
+      } catch (e) { flashError("整单退回，不留半截：\n" + e.message); }
+    };
+
+    document.getElementById("returnForm").onsubmit = async ev => {
+      ev.preventDefault();
+      const fd = new FormData(ev.target);
+      const input = Object.fromEntries(fd.entries());
+      input.cornerCracked = fd.get("cornerCracked") === "on";
+      if (!input.id) return flashError("请先选择未归还借样单");
+      try {
+        const r = await api("/api/loan/loans/" + encodeURIComponent(input.id) + "/return", {
+          method: "POST", body: JSON.stringify(input)
+        });
+        flashOk((r.loan.status === "待鉴定" ? "核验异常，已转待鉴定：" : "核验合格，已归还：") + r.loan.id);
+        ev.target.reset();
+        await load();
+      } catch (e) { flashError(e.message); }
+    };
+
+    document.querySelectorAll(".tab").forEach(btn => { btn.onclick = () => { filter = btn.dataset.f; renderList(); }; });
+    document.getElementById("reload").onclick = load;
+    load().catch(e => flashError(e.message));
+  </script>
+</body>
+</html>

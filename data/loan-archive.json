@@ -1,0 +1,105 @@
+{
+  "custodians": [
+    {
+      "name": "周云岫",
+      "duty": "在岗"
+    },
+    {
+      "name": "吴松涛",
+      "duty": "在岗"
+    },
+    {
+      "name": "郑砚农",
+      "duty": "离岗"
+    }
+  ],
+  "loans": [
+    {
+      "id": "JY-20260924-013453-9515",
+      "itemCode": "IS-001",
+      "cardCode": "KA-031",
+      "borrower": "宣纸坊",
+      "purpose": "样张",
+      "custodian": "周云岫",
+      "tempC": 22,
+      "humidity": 55,
+      "weightOutG": 31.2,
+      "status": "待鉴定",
+      "createdAt": "2026-09-24T01:34:53.879Z",
+      "returnedAt": "2026-09-24T01:34:53.943Z",
+      "return": {
+        "at": "2026-09-24T01:34:53.943Z",
+        "custodian": "吴松涛",
+        "weightInG": 30.7,
+        "weightLossG": 0.5,
+        "cornerCracked": true,
+        "reasons": [
+          "重量少 0.5 克（达到 0.5 克）",
+          "边角有裂角"
+        ],
+        "note": ""
+      },
+      "voidedAt": null,
+      "voidReason": null
+    },
+    {
+      "id": "JY-20260924-013453-1542",
+      "itemCode": "IS-002",
+      "cardCode": "KA-032",
+      "borrower": "",
+      "purpose": "",
+      "custodian": "吴松涛",
+      "tempC": 20,
+      "humidity": 60,
+      "weightOutG": 28,
+      "status": "失效",
+      "createdAt": "2026-09-24T01:34:53.963Z",
+      "returnedAt": null,
+      "return": null,
+      "voidedAt": "2026-09-24T01:34:53.984Z",
+      "voidReason": "墨锭编号由「IS-002」改为「IS-002B」"
+    },
+    {
+      "id": "JY-20260924-013530-9476",
+      "itemCode": "IS-002B",
+      "cardCode": "KA-033",
+      "borrower": "",
+      "purpose": "",
+      "custodian": "吴松涛",
+      "tempC": 21,
+      "humidity": 58,
+      "weightOutG": 27.5,
+      "status": "失效",
+      "createdAt": "2026-09-24T01:35:30.242Z",
+      "returnedAt": null,
+      "return": null,
+      "voidedAt": "2026-09-24T01:35:30.281Z",
+      "voidReason": "保管人由「吴松涛」改为「周云岫」"
+    },
+    {
+      "id": "JY-20260924-013530-9588",
+      "itemCode": "IS-002B",
+      "cardCode": "KA-034",
+      "borrower": "",
+      "purpose": "",
+      "custodian": "周云岫",
+      "tempC": 21,
+      "humidity": 58,
+      "weightOutG": 27.5,
+      "status": "已归还",
+      "createdAt": "2026-09-24T01:35:30.317Z",
+      "returnedAt": "2026-09-24T01:35:30.343Z",
+      "return": {
+        "at": "2026-09-24T01:35:30.343Z",
+        "custodian": "吴松涛",
+        "weightInG": 27.3,
+        "weightLossG": 0.2,
+        "cornerCracked": false,
+        "reasons": [],
+        "note": ""
+      },
+      "voidedAt": null,
+      "voidReason": null
+    }
+  ]
+}
